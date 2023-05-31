@@ -1,0 +1,10 @@
+{
+    "python.defaultInterpreterPath": "/datashare/envs/mlcourse/",
+    "python.autoComplete.extraPaths": 
+        [
+            "/home/coder/Course_Materials/",
+        ],
+        "python.analysis.extraPaths": [
+            "/home/coder/Course_Materials/"
+        ]
+}
