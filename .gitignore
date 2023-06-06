@@ -6,5 +6,5 @@
 **/data/**
 **/__pycache__/**
 **/.ipynb_checkpoints/**
-./TODO
-./make_data_tree.py
+TODO
+make_data_tree.py
