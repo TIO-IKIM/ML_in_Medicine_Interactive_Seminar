@@ -8,3 +8,5 @@
 **/.ipynb_checkpoints/**
 TODO
 make_data_tree.py
+.vscode
+Course_Materials/.vscode

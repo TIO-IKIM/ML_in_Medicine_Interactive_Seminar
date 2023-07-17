@@ -4,66 +4,72 @@ import torchvision
 from typing import List
 
 class ExampleSegmentationLoss(torch.nn.Module):
+
     """
-    Custom CrossEntropyLoss. Weights losses by weights tensor.
+    Return a loss module for the segmentation tasks. Supports XE+DICE, but DICE is disabled by default (and not even calculated), because it has a universal tendency to degrade the learning process.
+    This class guarantees that there are no overlapping target masks, and constructs a background at runtime If you already had one, this constructed background is going to be empty).
+
+    'weights' should be None (equal weighting) or a tensor containing class weights.
+    'classes' should be the number of classes for which you have targets masks.
+    If 'loss_for_background' is True, class 0 will be the computed background, and a loss will be calculated for it. If False, class 0 will instead be whatever class the first target mask is for.
+    If 'allow_multiclass' is False (the default), any overlapping segmentations are resolved by preferring the higher class index. For example, if class 1 is 'liver' and class 2 is 'lesion', and the segmentation masks say that a pixel is both in the liver and in a lesion, the new 'truth' in this case would be that the pixel is only in class 2.
     """
-    def __init__(self, classes: int, weights: List[float, ] = None):
+
+    def __init__(
+        self, 
+        classes: int, 
+        weights: torch.Tensor = None,
+        on_the_fly_background: bool = True,
+        allow_multiclass = False):
 
         super(ExampleSegmentationLoss, self).__init__()
-
         self.classes = classes
+        self.on_the_fly_background = on_the_fly_background
+        if weights is None: # if no weights given, equal weights by default
+            if self.on_the_fly_background is True:
+                weights = torch.Tensor([1 for c in range(self.classes+1)])
+            else:
+                weights = torch.Tensor([1 for c in range(self.classes)])
         self.weights = weights
-        if self.weights is None:
-            self.weights = torch.tensor([1.] * self.classes)
-        elif isinstance(self.weights, list):
-            self.weights = torch.tensor(self.weights, dtype = torch.float32)
-        elif torch.is_tensor(self.weights):
+        self.xe_module = nn.CrossEntropyLoss(weight = self.weights, reduction = "mean", ignore_index = -1)
+        self.allow_multiclass = allow_multiclass
+
+    def forward(self, predictions: torch.Tensor, targets: List[torch.Tensor,]):
+
+        # De facto number of classes (including background computed at runtime)
+        nc = (self.classes + 1 if self.on_the_fly_background is True else self.classes)
+
+        # Sanity check for tensor shape
+        if nc == predictions.size()[1]:
             pass
         else:
-            raise NotImplementedError
+            raise ValueError(f"The amount of de facto used classes ({nc}) must be equal to the number of provided predictions ({predictions.size()[1]}). If loss_for_background ({self.loss_for_background}) is True, the number of provided predictions should be one greater.")
 
-    def forward(self, predictions: torch.tensor, targets: List[torch.tensor, ], allow_multiclass: bool = False, norm_for_weights: bool = False):
-
-        # Create background tensor
-        if allow_multiclass is False:
-            # If we want to make sure there is no overlap between classes, we first make a background of all 1s ...
+        if self.allow_multiclass is False:
+            # Add a background target mask based on the other targets
             all_targets = [torch.ones_like(targets[0]).to(targets[0].device)]
-            # We stack all targets on top of another ...
             all_targets.extend(targets)
-            # We switch the order, and use argmax - this finds the first match, meaning we jot down the class
-            # index of whatever target we have. If there is more than one, argmax simply returns the first one,
-            # which, in our case, is the highest class index. This also neatly resolves all conflicts between
-            # the all-1s background tensor.
-            c_targets = torch.squeeze(self.classes - torch.argmax(torch.stack(tensors = all_targets[::-1], dim = 1), dim = 1) - 1)
-            # Finally, we convert to a one-hot representation.
-            # Since the new dimension is added at dim = -1, we move it
-            oh_targets = nn.functional.one_hot(c_targets, num_classes = self.classes).moveaxis(-1, 1)
+            
+            # Last class index always has priority if two masks match in one location
+            c_targets = torch.squeeze(self.classes - torch.argmax(torch.stack(tensors = all_targets[::-1], dim = 1), dim = 1), dim = 1)
+
+            # Convert to one-hot encoding
+            oh_targets = torch.nn.functional.one_hot(c_targets, num_classes = nc)
+            oh_targets = torch.moveaxis(oh_targets, -1, 1).to(torch.float32)
+        
         else:
             # Alternatively, if we don't care about class overlap, 
             # we just call every pixel that is not something else background, and leave it at that
             background = torch.clamp(torch.ones_like(targets[0]) - (targets[0]+targets[1]), min = 0)
             # and simply glue the tensors together
             oh_targets = torch.hstack([background, targets[0], targets[1]])
-
-        # Calculate cross entropy
-        B, C, X, Y = predictions.size()
-        eps = 1e-9
-        # Be careful - we must multiply elementwise here (* or torch.mul), NOT with a matrix product (@ or torch.matmul)!
-        xe = -1 * torch.log(nn.functional.softmax(predictions, dim = 1) + eps) - oh_targets.to(dtype = predictions.dtype)
-
-        # Multiply with weight tensor (which we expand to be the same size as our softmaxed predictions)
-        # Note that this implementation is slightly different from that of PyTorch in how weights are applied.
-        # (In the special case of equal weights, and norming for weights, the two are equivalent)
-        w = self.weights.to(device = predictions.device).view(1, -1, 1, 1).expand(B, C, X, Y)
-        xe_sum = torch.sum(xe * w)
-
-        # Normalize by dividing by B * X * Y (and normalize to account for custom weights, if desired)
-        w_sum = (1 if norm_for_weights is False else torch.sum(self.weights))
-        norm_sum = xe_sum / (B * w_sum * X * Y)
         
-        return norm_sum
+        # Compute CrossEntropy loss (since this class is just for testing, we outsource the math)
+        xe_loss = self.xe_module.forward(predictions, oh_targets)
+        return xe_loss 
 
-# Adapted from:
+
+# The below loss was adapted from:
 # https://github.com/hubutui/DiceLoss-PyTorch/blob/master/loss.py
 
 class BinaryDiceLoss(nn.Module):
