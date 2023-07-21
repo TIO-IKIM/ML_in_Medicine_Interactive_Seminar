@@ -40,69 +40,69 @@ class Transformer(nn.Module):
         
         super(Transformer, self).__init__()
         
-        self.heads=heads            
-        self.embed_dim=embed_dim
-        self.input_dim=input_dim
-        self.patches=patches
-        self.head_dim=int(self.embed_dim/self.heads) # embed_dim/heads = head_size
+        self.heads = heads            
+        self.embed_dim = embed_dim
+        self.input_dim = input_dim
+        self.patches = patches
+        self.head_dim = int(self.embed_dim/self.heads) # embed_dim/heads = head_size
 
         # Initial normalization
-        self.norm1=nn.LayerNorm([self.patches,self.embed_dim])
+        self.norm1 = nn.LayerNorm([self.patches, self.embed_dim])
 
         # Linear layer to compute Queries, Keys, and Values for each head h
-        self.linear1=nn.Linear(self.embed_dim,self.embed_dim*3,bias=False)#y=A*x
+        self.linear1 = nn.Linear(self.embed_dim, self.embed_dim*3, bias=False)#y=A*x
 
         # Second normalization
-        self.norm2=nn.LayerNorm([self.patches,self.embed_dim])
+        self.norm2 = nn.LayerNorm([self.patches, self.embed_dim])
 
         # MLP after self-attention
-        self.lin = nn.Sequential(nn.Linear(self.embed_dim,self.embed_dim*3,bias=True),
+        self.lin = nn.Sequential(nn.Linear(self.embed_dim, self.embed_dim*3, bias=True),
                                     nn.GELU(),
-                                    nn.Linear(self.embed_dim*3,self.embed_dim,bias=True),
+                                    nn.Linear(self.embed_dim*3, self.embed_dim, bias=True),
                                     nn.GELU())
         
  
     def forward(self, x): #input (B,N+1,D)
         
-        batch_size=x.shape[0]
+        batch_size = x.shape[0]
         
         # Norm 1
-        out=self.norm1(x)
+        out = self.norm1(x)
 
         # Create Queries, Keys, Values
         out = self.linear1(out) # Batch-Größe, N patches+1, embed dim D*3
         
         # Reshape
-        out= out.reshape(batch_size,self.patches,3,self.heads,self.head_dim)#Batch-Größe, N patches +1,3 (Q K V), h heads, head dim d_k
+        out = out.reshape(batch_size,self.patches,3,self.heads,self.head_dim)#Batch-Größe, N patches +1,3 (Q K V), h heads, head dim d_k
         
         # Permute
-        out=out.permute(2,0,3,1,4) # (3 (Q K V), Batch size, h heads, N patches +1, head dim d_k)
-        q,k,v=out[0],out[1],out[2] # Query, Key, Value
+        out = out.permute(2,0,3,1,4) # (3 (Q K V), Batch size, h heads, N patches +1, head dim d_k)
+        q, k, v = out[0],out[1],out[2] # Query, Key, Value
 
         # Transpose Keys
-        k_t=k.transpose(-2,-1) # (Batch size, h heads, head dim d_k, N patches (+1))
+        k_t = k.transpose(-2,-1) # (Batch size, h heads, head dim d_k, N patches (+1))
 
         # Matrix multiplication of Queries, Keys; sqrt(head dim d_k)
-        dp=(q@k_t)/torch.sqrt(torch.tensor(self.head_dim)) # Batch size, h heads, N patches +1, head dim d_k
-        dp=dp.softmax(-2) # use softmax line-by-line
+        dp = (q@k_t)/torch.sqrt(torch.tensor(self.head_dim)) # Batch size, h heads, N patches +1, head dim d_k
+        dp = dp.softmax(-2) # use softmax line-by-line
 
         # Multiply with values
-        weighted_dp=dp@v # (Batch size, h heads, head dim d_k, N patches (+1))
+        weighted_dp = dp@v # (Batch size, h heads, head dim d_k, N patches (+1))
 
         # Transpose
-        weighted_dp=weighted_dp.transpose(1,2) # (Batch size, N patches (+1), h heads, head dim d_k)
+        weighted_dp = weighted_dp.transpose(1,2) # (Batch size, N patches (+1), h heads, head dim d_k)
 
         # Concat h heads and head dim d_k back together
-        weighted_dp=weighted_dp.flatten(2) # (Batch size, N patches (+1), embed dim D)
+        weighted_dp = weighted_dp.flatten(2) # (Batch size, N patches (+1), embed dim D)
 
-        out=x+weighted_dp # add skip connection
-        out1=out # save for the next skip connection
+        out = x+weighted_dp # add skip connection
+        out1 = out # save for the next skip connection
 
         # Norm 2
-        out=self.norm2(out)
+        out = self.norm2(out)
 
         # MLP
-        out=self.lin(out)   
+        out = self.lin(out)   
 
         return out + out1 # return result and skip connection
     
@@ -193,5 +193,12 @@ if __name__ == "__main__":
 
     # Build the model and count its parameters.
     model = ViT(input_dim=256, classes=3, embed_dim=128, heads=8, patches=256)
-    numel_list = [p.numel() for p in model.parameters()]
-    print(sum(numel_list))
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    num_parameters = sum([np.prod(p.size()) for p in model_parameters])
+    print(num_parameters)
+
+    """
+    Note that the goal for this exercise is not to build the original ViT,
+    or one of the absurdly massively upscaled ones out there, just any functional ViT,
+    which successfully trains on LiTS.
+    """

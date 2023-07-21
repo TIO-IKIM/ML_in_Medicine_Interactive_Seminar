@@ -123,6 +123,38 @@ def get_num_params(model: torch.nn.Module, pbar: bool = False):
         pp += nn
     return np, pp
 
+def unravel_model(model: torch.nn.Module, shorthand: bool = True):
+    """
+    Unravel a model, spitting out all named layers in instantiation (not necessarily execution) order.
+    """
+    params = {}
+    np = 0
+    for n, p in list(model.named_parameters()):
+        nn = 1
+        for s in list(p.size()):
+            nn = nn*s
+        np += nn
+        params[n] = sh(nn) if shorthand is True else nn
+    return params
+
+def sh(x):
+    assert isinstance(x, float) or isinstance(x, int)
+    ls=["","k","M","B","T","Q"]
+    i=0
+    if abs(x)<1:
+        return "0"
+    s="-" if x<0 else ""
+    while i!=(len(ls)+1):
+        if i==6:
+            raise ValueError(f"x is >= 1e{3*len(ls)} and can't be shorthanded. Wow.")
+        elif x//(10**(3*i))>=1 and x//(10**(3*(i+1)))==0:
+            break
+        else:
+            i+=1
+    if i==0:
+        return f"{s}{x}"
+    return f"{s}{x/(10**(3*i)):.1f}{ls[i]}"
+
 def lits_image_loader(file: str):
 
     # Open the file with PIL.

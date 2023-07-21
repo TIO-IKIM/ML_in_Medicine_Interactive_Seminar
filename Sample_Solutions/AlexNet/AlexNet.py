@@ -1,49 +1,68 @@
-# Author: Prometheus9920
+# Author: fjonske
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class Alexnet(nn.Module):
 
+    """
+    Note that the cross-GPU talk that exists in the original AlexNet is not happening in the modernized version, where splitting across GPUs is automatic. The "extra" channels that would exist on the second GPU are instead simply added to the model width.
+    Note also that we forego the modern AdaptiveAveragePool and ReLUs, because those were not in the original paper. 
+    """
+
     def __init__(self):
 
         super().__init__()
 
         # Define all constituent modules
-        self.conv1 = nn.Conv2d(3, 8, kernel_size=(3,3),padding=1)
-        self.lrp1=nn.LocalResponseNorm(4, alpha=0.0001, beta=0.75, k=1.0)
-        self.conv2 = nn.Conv2d(8, 8, kernel_size=(3,3),padding=1)
-        self.lrp2=nn.LocalResponseNorm(4, alpha=0.0001, beta=0.75, k=1.0)
-        self.conv3 = nn.Conv2d(8, 8, kernel_size=(3,3),padding=1)
-        self.lrp3=nn.LocalResponseNorm(4, alpha=0.0001, beta=0.75, k=1.0)
-        self.dr1=nn.Dropout(p=0.5, inplace=False)
-        self.fc1 = nn.Linear(8 * 32 * 32, 64)
-        self.dr2=nn.Dropout(p=0.5, inplace=False)
-        self.fc2 = nn.Linear(64,32)
-        self.dr3=nn.Dropout(p=0.5, inplace=False)
-        self.fc3 = nn.Linear(32, 3)
-        
+        self.network = nn.Sequential(
+            nn.Conv2d(1, 96, kernel_size=11, stride=4, padding=2), # 3 for regular images, 1 for LiTS
+            nn.LocalResponseNorm(5, alpha=1e-4, beta=0.75, k=2),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(96, 256, kernel_size=5, padding=2),
+            nn.LocalResponseNorm(5, alpha=1e-4, beta=0.75, k=2),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.Conv2d(256, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 384, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(384, 256, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2)
+        )
+        self.head = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(256 * 7 * 7, 4096),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.5),
+            nn.Linear(4096, 4096),
+            nn.ReLU(inplace=True),
+            nn.Linear(4096, 3),
+        )
  
     def forward(self, x):
 
-        # Chain all constituent modules
-        out = F.max_pool2d(self.lrp1(F.relu(self.conv1(x))),kernel_size=(2,2),stride= 2,padding=0)
-        out = F.max_pool2d(self.lrp2(F.relu(self.conv2(out))),kernel_size=(2,2),stride= 2,padding=0)
-        out = F.max_pool2d(self.lrp3(F.relu(self.conv2(out))),kernel_size=(2,2),stride= 2,padding=0)
-        out = out.view(-1, 8 * 32 * 32)
-        out = self.dr1(out)
-        out = F.relu(self.fc1(out))
-        out = self.dr2(out)
-        out = F.relu(self.fc2(out))
-        out = self.dr3(out)
-        out = self.fc3(out)
+        x = self.network(x)
+        x = x.view(x.size()[0], -1) # This functions somewhat like flatten(), but is faster.
+        x = self.head(x)
 
-        return out
+        return x
     
 if __name__ == "__main__":
 
     # Build the model and count its parameters.
     model = Alexnet()
-    numel_list = [p.numel() for p in model.parameters()]
-    print(sum(numel_list))
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    num_parameters = sum([np.prod(p.size()) for p in model_parameters])
+    print(f"Our AlexNet: {num_parameters} parameters")
+
+    """
+    Note that this number necessarily deviates from the pytorch version and original paper version:
+    The convolution layers in pytorch have the wrong channel sizes, and the original paper expects
+    a hardcoded input of 227x227 pixel images, while this sample solution has a hardcoded 256x256
+    expectation which the first fully connected layer relies on. The modern PyTorch implementation
+    uses AdaptiveAveragePool here, which is generally recommended, unless you do archaeology like
+    we are doing right now.
+    """

@@ -1,8 +1,9 @@
 # Author: tsimo123
 
+import numpy as np
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 class Conv2d_Block(nn.Module):
 
@@ -95,9 +96,9 @@ class UNet(torch.nn.Module):
         
         super().__init__()
 
-        self.encoder     = Encoder(encoder_channel)                         
-        self.decoder     = Decoder(decoder_channel)
-        self.head        = nn.Conv2d(decoder_channel[-1], num_class,1) 
+        self.encoder = Encoder(encoder_channel)                         
+        self.decoder = Decoder(decoder_channel)
+        self.head = nn.Conv2d(decoder_channel[-1], num_class,1) 
         # This head-convolution adjusts the number of output channel from the decoder to the number of classes. 
 
     def forward(self, x):
@@ -105,12 +106,12 @@ class UNet(torch.nn.Module):
         saved_images = self.encoder(x)                                          
         # Applies the Encoder.
         
-        out      = self.decoder(saved_images[::-1][0], saved_images[::-1][1:])
+        out = self.decoder(saved_images[::-1][0], saved_images[::-1][1:])
         # Applies the Decoder. 
         # saved_images[::-1][0] is the last saved images basically the output  of the Encoder.
         # saved_images[::-1][1:] is the saved images in reverse without the last image.
 
-        out      = self.head(out)
+        out = self.head(out)
         # Applies the head-convolution. 
 
         return out
@@ -119,5 +120,11 @@ if __name__ == "__main__":
 
     # Build the model and count its parameters.
     model = UNet()
-    numel_list = [p.numel() for p in model.parameters()]
-    print(sum(numel_list))
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    num_parameters = sum([np.prod(p.size()) for p in model_parameters])
+    print(num_parameters)
+
+    """
+    Note that we go for a symmetrical UNet, which has significantly different parameter
+    counts and shapes, compared to the original.
+    """
